@@ -2,6 +2,8 @@
 
 import time
 import os
+import joblib
+import pandas as pd
 import math
 import argparse
 from glob import glob
@@ -9,13 +11,13 @@ from collections import OrderedDict
 import random
 import warnings
 from datetime import datetime
-
+import cv2
 import numpy as np
 from tqdm import tqdm
 
 from sklearn.model_selection import train_test_split
 from skimage.io import imread, imsave
-
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,11 +70,11 @@ def main():
     model = model.cuda()
 
     # Data loading code
-    img_paths = glob('input/' + args.dataset + '/images/*')
-    mask_paths = glob('input/' + args.dataset + '/masks/*')
+    img_paths = glob('input/' + 'xray_test' + '/images/*')
+    mask_paths = glob('input/' + 'xray_test' + '/masks/*')
 
     train_img_paths, val_img_paths, train_mask_paths, val_mask_paths = \
-        train_test_split(img_paths, mask_paths, test_size=0.2, random_state=41)
+        train_test_split(img_paths, mask_paths, test_size=0.8, random_state=41)
 
     model.load_state_dict(torch.load('models/%s/model.pth' %args.name))
     model.eval()
@@ -84,48 +86,66 @@ def main():
         shuffle=False,
         pin_memory=True,
         drop_last=False)
-
+    img = cv2.imread('test.png')
+    img = cv2.resize(img, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_CUBIC)
+    img = img.transpose((2, 0, 1))
+    input_img = np.zeros((16,3,256,208),np.uint8)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
 
         with torch.no_grad():
             for i, (input, target) in tqdm(enumerate(val_loader), total=len(val_loader)):
+                for k in range(0,16):
+                     input_img[k,:,:,:] = img/255
+                test_img = torch.tensor(input_img,dtype=torch.float).cuda()
+             
                 input = input.cuda()
+                print(input)
                 target = target.cuda()
 
                 # compute output
                 if args.deepsupervision:
                     output = model(input)[-1]
                 else:
-                    output = model(input)
+                    output = model(input).cuda()
 
                 output = torch.sigmoid(output).data.cpu().numpy()
-                img_paths = val_img_paths[args.batch_size*i:args.batch_size*(i+1)]
-
-                for i in range(output.shape[0]):
+                img_paths = val_img_paths[args.batch_size*i:args.batch_size*(i+1)]  
+                try:           
+                  for i in range(output.shape[0]):
                     imsave('output/%s/'%args.name+os.path.basename(img_paths[i]), (output[i,0,:,:]*255).astype('uint8'))
+                except:
+                  pass
 
         torch.cuda.empty_cache()
 
     # IoU
     ious = []
+    count = 1
     for i in tqdm(range(len(val_mask_paths))):
         mask = imread(val_mask_paths[i])
         pb = imread('output/%s/'%args.name+os.path.basename(val_mask_paths[i]))
-
         mask = mask.astype('float32') / 255
         pb = pb.astype('float32') / 255
 
-        '''
-        plt.figure()
-        plt.subplot(121)
-        plt.imshow(mask)
-        plt.subplot(122)
-        plt.imshow(pb)
-        plt.show()
-        '''
+        img = cv2.imread('input/xray_test/images/'+os.path.basename(val_mask_paths[i]))
+        count = count+1
 
-        iou = iou_score(pb, mask)
+        mask_img = np.uint8(pb*255)
+        ret, img_binary = cv2.threshold(mask_img, 127, 255, 0)
+        contours, color_hierachy =cv2.findContours(img_binary.copy(),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        c0 = np.reshape(contours[0],(-1,2))
+        show_img = cv2.drawContours(img.copy(), contours, -1, (0,255,0), 2)
+        cv2.imshow('img',np.hstack((img,show_img)))
+        cv2.imshow('mask',mask_img)
+        time.sleep(5)
+        cv2.waitKey(1)
+        #plt.figure()
+        #plt.subplot(111)
+        #plt.imshow(pb)
+        #plt.pause(10)
+        #plt.close()
+        iou = iou_score(pb, mask[:,:,0])
         ious.append(iou)
     print('IoU: %.4f' %np.mean(ious))
 

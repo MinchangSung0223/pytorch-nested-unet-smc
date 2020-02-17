@@ -25,7 +25,6 @@ class Dataset(torch.utils.data.Dataset):
         mask_path = self.mask_paths[idx]
         image = imread(img_path)
         mask = imread(mask_path)
-
         image = image.astype('float32') / 255
         mask = mask.astype('float32') / 255
 
@@ -38,7 +37,6 @@ class Dataset(torch.utils.data.Dataset):
                 mask = mask[::-1, :].copy()
 
         image = image.transpose((2, 0, 1))
-        mask = mask[:,:,np.newaxis]
         mask = mask.transpose((2, 0, 1))
-
+        mask = np.reshape(mask[0,:,:],(1,256,208))
         return image, mask
